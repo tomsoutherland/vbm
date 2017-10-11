@@ -1,0 +1,178 @@
+#!/usr/bin/perl
+#
+# script to boot and attach console
+# to headless VirtualBox machine
+#
+use Data::Dumper;
+use Getopt::Std;
+use strict;
+use File::Path qw(make_path);
+use File::Temp qw(tempfile);
+use vars qw/ %opt /;
+
+# read in the config file
+our ($vbdiskdir,$vbheadless,$vbheadlessargs,$vbmanage,$socat,$socatargs);
+my $config_file = $ENV{'HOME'}."/.vbm";
+require $config_file;
+
+my $opt_string='m:n:o:ablhpv';
+getopts( "$opt_string", \%opt ) or usage();
+if(! -d "$vmdiskdir"){ make_path("$vmdiskdir") }
+if($opt{h}){ usage(); exit; }
+if($opt{l}){ listvms(); exit; }
+if($opt{m}){ mountcd(); exit; }
+if($opt{a}){ add_disks()e exit; }
+if($opt{r}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
+if(! $opt{n}){ usage(); exit; }
+our $conpipe="/tmp/vb-".$opt{n}."-console";
+our $titlebar=$opt{n}." console";
+
+sub add_disks {
+  if( ! $opt{N} ){ usage(1); }
+  if( ! $opt{c} ){ usage(1); }
+  if( ! $opt{s} ){ usage(1); }
+  my $cmdstring;
+  for(my $i=0; $i<$opt{a}; $i++){
+    print "Using $vmdiskdir for shared storage.\n" if $opt{v};
+    my $diskname = disk_tmpfile();
+    print "creating $diskname\n" if $opt{v};
+    $vbmanage createmedium disk --size $opt{s} --filename '$diskname'
+
+sub mountcd {
+  my(%sata);
+  open(foo, "$vbmanage showvminfo $opt{n} --machinereadable |") or die;
+  while(<foo>){ chomp;
+    if(/^\"(\S+)\-(\d+)\-\d+\"\=\S+.*\.iso\"$/){
+      my $c = $1; my $p = $2;
+      my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $c --port $p --device 0 --type dvddrive --medium emptydrive";
+      exec($cmdstring)||die "exec failed: $cmdstring";
+      sleep 3;
+      my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $c --port $p --device 0 --type dvddrive --medium $opt{m}";
+      exec($cmdstring)||die "exec failed: $cmdstring";
+    }
+    elsif(/^\"(\S+)\-(\d+)\-\d+\"\=\"emptydrive\"/){
+      my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $1 --port $2 --device 0 --type dvddrive --medium $opt{m}";
+      exec($cmdstring)||die "exec failed: $cmdstring";
+    }
+  }
+}
+
+sub listvms {
+  my ($vm,%vms,$maxl);
+  open(foo, "$vbmanage list -l vms |");
+  while(<foo>){ chomp;
+    if(/^Name:\s+(\S+.*)$/){ $vm=$1; }
+    if(/^State:\s+(\S+.*)\.\d+\)$/){ $vms{$vm}=$1.")"; }
+  }
+  print "\n\n  Virtual Machines\n\n";
+  foreach $vm(sort keys(%vms)){ my $l=length($vm); if($l>$maxl){$maxl=$l;} }
+  foreach $vm(sort keys(%vms)){
+    my $n = $vm;
+    while(length($n)<$maxl){ $n=" ".$n; }
+    print "    $n  ::  $vms{$vm}\n";
+  }
+  print "\n\n";
+}
+
+if($opt{b}){
+  # set the title bar
+  set_title_bar($titlebar);
+
+  # connect console if running
+  if(checkrunning($opt{n})){ consoleconnect($conpipe); }
+
+  # boot vm
+  if( my @bo = split(/\,/,$opt{o}) ){
+    my $cmdstring = "$vbmanage modifyvm $opt{n} --boot1 $bo[0] --boot2 $bo[1] --boot3 $bo[2] --boot4 $bo[3]";
+    system($cmdstring);
+  }
+  bootmachine($opt{n});
+  if(checkrunning($opt{n})){ consoleconnect($conpipe); }
+  die "Can not boot or console to $opt{n}";
+}
+
+if($opt{p}){
+  my $cmdstring = "$vbmanage controlvm $opt{n} poweroff";
+  system($cmdstring);
+}
+
+if($opt{A}){
+  my $cmdstring = "$vbmanage controlvm $opt{n} acpipowerbutton";
+  system($cmdstring);
+}
+
+sub set_title_bar {
+  my($titlebar)=@_;
+  print "\033]0;${titlebar}\007";
+}
+
+sub consoleconnect {
+  my($pipefoo)=@_;
+  if(! -e $pipefoo){ die "Console pipe does not exist: $pipefoo"; }
+  system("clear");
+  my $cmdstring = $socat." ".$socatargs." ".$pipefoo;
+  exec($cmdstring)||die "exec failed: $cmdstring";
+}
+
+sub checkrunning {
+  my($machine)=@_;
+  my $running=0;
+  open(foo,"$vbmanage list runningvms |")||die;
+  while(<foo>){
+    chomp;
+    if(/^\"$machine\"\s.*/){ $running=1; }
+  }
+  close foo;
+  return($running);
+}
+
+sub bootmachine {
+  my($machine)=@_;
+  my $cmdstring = "$vbmanage modifyvm $machine --uartmode1 server /tmp/vb-${machine}-console";
+  system($cmdstring);
+  my $cmdstring = "$vbmanage modifyvm $machine --uart1 0x3f8 4";
+  system($cmdstring);
+  $cmdstring = "$vbheadless $vbheadlessargs -s $machine";
+  defined(my $pid = fork)||die "Can't fork: $!";
+  if($pid){
+    # wait a bit for the machine to start
+    sleep 5;
+  }else{
+    # child needs to exec the vm start command
+    open STDIN, '/dev/null'   or die "Can't read /dev/null: $!";
+    open STDOUT, '>/dev/null' or die "Can't write to /dev/null: $!";
+    open STDERR, '>/dev/null' or die "Can't write to /dev/null: $!";
+    exec($cmdstring)||die;
+  }
+}
+
+sub usage {
+  print qq|
+    usage:
+
+    $0 -l
+    $0 -n VM -A
+    $0 -n VM -b [ -v ]
+    $0 -n VM -b [ -o dev1,dev2,dev3,dev4 ]
+    $0 -n VM -m /path/to/cdimage.iso
+    $0 -n VM -p
+    $0 -a X -c XXX -s XX -N VMx,VMy,VMz,... [ -v ]
+    $0 -h
+
+    -l : list VirtualBox machines
+    -n : name of the VirtualBox machine
+    -A : send ACPI power off request
+    -b : power on and boot machine
+    -m : mount iso on node
+    -o : when used with -b, specify the 4
+         devices none,floppy,dvd,disk,net
+    -r : enable VRDE server
+    -a : add X drives to VM(s)
+    -c : controller name should be SAS or SCSI
+    -s : size of drive(s) in megabytes
+    -N : comma seperated list of VMs to which the disks should be attached
+    -p : power off machine
+    -v : verbose output
+    -h : duh!
+|;
+}

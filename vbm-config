@@ -1,0 +1,16 @@
+use strict;
+#
+# set the following to match your environment
+#
+our $vbdiskdir = $ENV{'HOME'}."/VirtualBox VMs/VMdisks"; # path for shared disks
+our $vbheadless = "/usr/local/bin/VBoxHeadless";
+our $vbheadlessargs = "--vrde off";
+our $vbmanage = "/usr/local/bin/VBoxManage";
+our $socat     = "/usr/local/bin/socat";
+our $socatargs = "-,raw,echo=0,escape=0x1d";
+#
+# copy edited file to ~/.vbm
+#
+# leave ;1
+#
+1;
