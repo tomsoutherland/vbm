@@ -16,21 +16,43 @@ our ($vbdiskdir,$vbheadless,$vbheadlessargs,$vbmanage,$socat,$socatargs,$VMs);
 my $config_file = $ENV{'HOME'}."/.vbm";
 require $config_file;
 
-my $opt_string='m:n:o:a:c:s:N:AblhpvL';
-getopts( "$opt_string", \%opt ) or usage();
+my $opt_string='m:n:o:a:c:s:N:AblhpvLD';
+if(! getopts( "$opt_string", \%opt )){ usage(); exit; }
 if(! -d "$vbdiskdir"){ make_path("$vbdiskdir") }
 # init the VMs hash
 read_vms();
+
+our $conpipe="/tmp/vb-".$opt{n}."-console";
+our $titlebar=$opt{n}." console";
+
 if($opt{h}){ usage(); exit; }
 if($opt{l}){ listvms(); exit; }
 if($opt{m}){ mountcd(); exit; }
 if($opt{a}){ add_disks(); exit; }
 if($opt{r}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
+if($opt{b}){ boot_vm(); exit; }
+if($opt{p}){ poweroff_vm(); exit; }
+if($opt{A}){ poweroff_acpi_vm(); exit; }
+# print usage and bail if we get to here
+usage(); exit;
 
-our $conpipe="/tmp/vb-".$opt{n}."-console";
-our $titlebar=$opt{n}." console";
+sub poweroff_vm {
+  my $cmdstring = "$vbmanage controlvm $opt{n} poweroff";
+  system($cmdstring);
+}
+
+sub poweroff_acpi_vm {
+  my $cmdstring = "$vbmanage controlvm $opt{n} acpipowerbutton";
+  system($cmdstring);
+}
+
+sub set_title_bar {
+  my($titlebar)=@_;
+  print "\033]0;${titlebar}\007";
+}
 
 sub read_vms {
+  $VMs={};
   my ($vm);
   open(foo, "$vbmanage list -l vms |");
   while(<foo>){ chomp;
@@ -42,8 +64,7 @@ sub read_vms {
     if(/^(\S+)\s\((\d+)\,\s(\d+)\):\s(Empty)$/){ $VMs->{$vm}->{$1}->{$2}->{$3}->{'file'}=$4; $VMs->{$vm}->{$1}->{$2}->{$3}->{'uuid'}='';}
     if(/^NIC\s(\d):\s+MAC:\s(\S+)\,\sAttachment\:\s(\S+.*)\,\sCable connect/){ $VMs->{$vm}->{'nic'}->{$1}->{'mac'}=$2; $VMs->{$vm}->{'nic'}->{$1}->{'attach'}=$3; }
   }
-  print Dumper $VMs;
-  #exit;
+  #print Dumper $VMs if $opt{D};
 }
 
 sub add_disks {
@@ -51,17 +72,32 @@ sub add_disks {
   if( ! $opt{c} ){ usage(1); }
   if( ! $opt{s} ){ usage(1); }
   my @nodes=split(',', $opt{N});
+  my $shared=1;
   if(scalar(@nodes) == 1 ){
     my $node=$nodes[0];
     $vbdiskdir = $VMs->{$node}->{'dir'};
+    $shared=0;
+  }
+  # add controller if needed
+  foreach my $node(@nodes){
+    my $ctlr=uc($opt{c});
+    my $cmd = "$vbmanage storagectl '$node' --name $ctlr --add $ctlr > /dev/null 2>&1";
+    if($ctlr eq "SAS"){ $cmd = "$vbmanage storagectl '$node' --name $ctlr --add $ctlr --portcount 8 > /dev/null 2>&1"; }
+    print "Running: $cmd\n" if $opt{D};
+    system($cmd);
   }
   print "Using $vbdiskdir for disk creation.\n" if $opt{v};
   my $cmdstring;
-  for(my $i=0; $i<$opt{a}; $i++){
+  my $disks=$opt{a};
+  print "Creating $disks disks.\n" if $opt{v};
+  for(my $I=1; $I<=$disks; $I++){
+    print "Creating $I of $disks disks.\n" if $opt{v};
     my $diskname = disk_tmpfile();
     print "creating $diskname\n" if $opt{v};
     my $size = (1024 * $opt{s});
-    my $cmd="$vbmanage createmedium disk --size $size --filename '$diskname' 2>&1\n";
+    my $cmd;
+    if($shared){ $cmd = "$vbmanage createmedium disk --size $size --variant Fixed --filename '$diskname' 2>&1\n"; }
+    else{ $cmd = "$vbmanage createmedium disk --size $size --filename '$diskname' 2>&1\n"; }
     print $cmd if $opt{v};
     my $uuid='';
     open(foo, "$cmd |");
@@ -71,13 +107,41 @@ sub add_disks {
     }
     foreach my $node(@nodes){
       print "Attaching new disk $uuid to $node\n" if $opt{v};
-      disk_attach($node,$uuid);
+      disk_attach($node,$uuid,$shared);
     }
   }
 }
 
 sub disk_attach {
-  my ($node, $uuid) = @_;
+  my ($node, $diskuuid, $shared) = @_;
+  my $ctlr=uc($opt{c});
+  my ($port, $portmax, $targetmax);
+  if($ctlr eq "SCSI"){ $portmax=15; $targetmax=0; }
+  elsif($ctlr eq "SATA"){ $portmax=29; $targetmax=0; }
+  elsif($ctlr eq "SAS"){ $portmax=7; $targetmax=0; }
+  elsif($ctlr eq "IDE"){ $portmax=1; $targetmax=1; }
+  else{
+    print "\nUnknown controller: $ctlr\nRemoving disk, $diskuuid\n";
+    exec("$vbmanage closemedium $diskuuid --delete")||die;
+    exit(1);
+  }
+  # find an unused port
+  my $attached=0;
+  for(my $i=0; $i<=$portmax; $i++){
+    for(my $j=0; $j<=$targetmax; $j++){
+      print "Checking port $i and device $j\n" if $opt{D};
+      if(! defined $VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'}){
+        my $cmd = "$vbmanage storageattach '$node' --storagectl $ctlr --type hdd --port $i --device $j --medium $diskuuid";
+        if($shared){ $cmd .= " --mtype shareable"; }
+        print "Running: $cmd\n" if $opt{D};
+        system($cmd);
+        read_vms();
+        return;
+      }
+    }
+  }
+  print "Unable to attach disk, deleting.\n";
+  system("$vbmanage closemedium $diskuuid --delete > /dev/null 2>&1");
 }
 
 sub disk_tmpfile {
@@ -128,7 +192,7 @@ sub listvms {
   }
 }
 
-if($opt{b}){
+sub boot_vm {
   # set the title bar
   set_title_bar($titlebar);
 
@@ -143,21 +207,6 @@ if($opt{b}){
   bootmachine($opt{n});
   if(checkrunning($opt{n})){ consoleconnect($conpipe); }
   die "Can not boot or console to $opt{n}";
-}
-
-if($opt{p}){
-  my $cmdstring = "$vbmanage controlvm $opt{n} poweroff";
-  system($cmdstring);
-}
-
-if($opt{A}){
-  my $cmdstring = "$vbmanage controlvm $opt{n} acpipowerbutton";
-  system($cmdstring);
-}
-
-sub set_title_bar {
-  my($titlebar)=@_;
-  print "\033]0;${titlebar}\007";
 }
 
 sub consoleconnect {
@@ -229,5 +278,6 @@ sub usage {
     -p : power off machine
     -v : verbose output
     -h : duh!
+
 |;
 }
