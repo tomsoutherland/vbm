@@ -29,7 +29,6 @@ if($opt{h}){ usage(); exit; }
 if($opt{l}){ listvms(); exit; }
 if($opt{m}){ mountcd(); exit; }
 if($opt{a}){ add_disks(); exit; }
-if($opt{r}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
 if($opt{b}){ boot_vm(); exit; }
 if($opt{p}){ poweroff_vm(); exit; }
 if($opt{A}){ poweroff_acpi_vm(); exit; }
@@ -176,15 +175,15 @@ sub listvms {
   foreach $vm(sort keys(%{$VMs})){
     my $n;
     while(length($n.$vm)<$maxl){ $n.=" "; }
-    print "    $n$vm  ::  $VMs->{$vm}->{'state'}\n";
+    print "    $vm$n  ::  $VMs->{$vm}->{'state'}\n";
     if($opt{L}){
       foreach $controller(sort keys(%{$VMs->{$vm}->{'nic'}})){
-        print "$n      NIC $controller :: MAC $VMs->{$vm}->{'nic'}->{$controller}->{'mac'} :: $VMs->{$vm}->{'nic'}->{$controller}->{'attach'}\n";
+        print "      NIC $controller :: MAC $VMs->{$vm}->{'nic'}->{$controller}->{'mac'} :: $VMs->{$vm}->{'nic'}->{$controller}->{'attach'}\n";
       }
       foreach $controller(sort(@controllers)){
         foreach my $i(sort keys(%{$VMs->{$vm}->{$controller}})){
           foreach my $j(sort keys(%{$VMs->{$vm}->{$controller}->{$i}})){
-            print "$n      $controller ($i, $j) $VMs->{$vm}->{$controller}->{$i}->{$j}->{'file'}  UUID $VMs->{$vm}->{$controller}->{$i}->{$j}->{'uuid'}\n";
+            print "      $controller ($i, $j) $VMs->{$vm}->{$controller}->{$i}->{$j}->{'file'}  UUID $VMs->{$vm}->{$controller}->{$i}->{$j}->{'uuid'}\n";
           }
         }
       }
@@ -231,6 +230,7 @@ sub checkrunning {
 
 sub bootmachine {
   my($machine)=@_;
+  if($opt{r}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
   my $cmdstring = "$vbmanage modifyvm $machine --uartmode1 server /tmp/vb-${machine}-console";
   system($cmdstring);
   my $cmdstring = "$vbmanage modifyvm $machine --uart1 0x3f8 4";
