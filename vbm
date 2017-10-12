@@ -8,35 +8,82 @@ use Getopt::Std;
 use strict;
 use File::Path qw(make_path);
 use File::Temp qw(tempfile);
+use File::Basename;
 use vars qw/ %opt /;
 
 # read in the config file
-our ($vbdiskdir,$vbheadless,$vbheadlessargs,$vbmanage,$socat,$socatargs);
+our ($vbdiskdir,$vbheadless,$vbheadlessargs,$vbmanage,$socat,$socatargs,$VMs);
 my $config_file = $ENV{'HOME'}."/.vbm";
 require $config_file;
 
-my $opt_string='m:n:o:ablhpv';
+my $opt_string='m:n:o:a:c:s:N:AblhpvL';
 getopts( "$opt_string", \%opt ) or usage();
-if(! -d "$vmdiskdir"){ make_path("$vmdiskdir") }
+if(! -d "$vbdiskdir"){ make_path("$vbdiskdir") }
+# init the VMs hash
+read_vms();
 if($opt{h}){ usage(); exit; }
 if($opt{l}){ listvms(); exit; }
 if($opt{m}){ mountcd(); exit; }
-if($opt{a}){ add_disks()e exit; }
+if($opt{a}){ add_disks(); exit; }
 if($opt{r}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
-if(! $opt{n}){ usage(); exit; }
+
 our $conpipe="/tmp/vb-".$opt{n}."-console";
 our $titlebar=$opt{n}." console";
+
+sub read_vms {
+  my ($vm);
+  open(foo, "$vbmanage list -l vms |");
+  while(<foo>){ chomp;
+    if(/^Name:\s+(\S+.*)$/){ $vm=$1; }
+    if(/^UUID:\s+(\S+)$/){ $VMs->{$vm}->{'uuid'}=$1.")"; }
+    if(/^State:\s+(\S+.*)\.\d+\)$/){ $VMs->{$vm}->{'state'}=$1.")"; }
+    if(/^Config file:\s+(\S+.*)$/){ $VMs->{$vm}->{'dir'}=dirname($1); }
+    if(/^(\S+)\s\((\d+)\,\s(\d+)\):\s(\S+.*)\s\(UUID\:\s(\S+)\)$/){ $VMs->{$vm}->{$1}->{$2}->{$3}->{'file'}=$4; $VMs->{$vm}->{$1}->{$2}->{$3}->{'uuid'}=$5;}
+    if(/^(\S+)\s\((\d+)\,\s(\d+)\):\s(Empty)$/){ $VMs->{$vm}->{$1}->{$2}->{$3}->{'file'}=$4; $VMs->{$vm}->{$1}->{$2}->{$3}->{'uuid'}='';}
+    if(/^NIC\s(\d):\s+MAC:\s(\S+)\,\sAttachment\:\s(\S+.*)\,\sCable connect/){ $VMs->{$vm}->{'nic'}->{$1}->{'mac'}=$2; $VMs->{$vm}->{'nic'}->{$1}->{'attach'}=$3; }
+  }
+  print Dumper $VMs;
+  #exit;
+}
 
 sub add_disks {
   if( ! $opt{N} ){ usage(1); }
   if( ! $opt{c} ){ usage(1); }
   if( ! $opt{s} ){ usage(1); }
+  my @nodes=split(',', $opt{N});
+  if(scalar(@nodes) == 1 ){
+    my $node=$nodes[0];
+    $vbdiskdir = $VMs->{$node}->{'dir'};
+  }
+  print "Using $vbdiskdir for disk creation.\n" if $opt{v};
   my $cmdstring;
   for(my $i=0; $i<$opt{a}; $i++){
-    print "Using $vmdiskdir for shared storage.\n" if $opt{v};
     my $diskname = disk_tmpfile();
     print "creating $diskname\n" if $opt{v};
-    $vbmanage createmedium disk --size $opt{s} --filename '$diskname'
+    my $size = (1024 * $opt{s});
+    my $cmd="$vbmanage createmedium disk --size $size --filename '$diskname' 2>&1\n";
+    print $cmd if $opt{v};
+    my $uuid='';
+    open(foo, "$cmd |");
+    while(<foo>){
+      chomp;
+      if(/UUID: (\S+)$/){ $uuid=$1 }
+    }
+    foreach my $node(@nodes){
+      print "Attaching new disk $uuid to $node\n" if $opt{v};
+      disk_attach($node,$uuid);
+    }
+  }
+}
+
+sub disk_attach {
+  my ($node, $uuid) = @_;
+}
+
+sub disk_tmpfile {
+  (undef, my $diskname) = tempfile("vmdiskXXXX", DIR=>"$vbdiskdir", OPEN=>0, SUFFIX=>"");
+  return($diskname);
+}
 
 sub mountcd {
   my(%sata);
@@ -58,20 +105,27 @@ sub mountcd {
 }
 
 sub listvms {
-  my ($vm,%vms,$maxl);
-  open(foo, "$vbmanage list -l vms |");
-  while(<foo>){ chomp;
-    if(/^Name:\s+(\S+.*)$/){ $vm=$1; }
-    if(/^State:\s+(\S+.*)\.\d+\)$/){ $vms{$vm}=$1.")"; }
-  }
+  my ($vm, $maxl, $controller);
+  my @controllers=("IDE", "SATA", "SCSI", "SAS");
+  foreach $vm(sort keys(%{$VMs})){ my $l=length($vm); if($l>$maxl){$maxl=$l;} }
   print "\n\n  Virtual Machines\n\n";
-  foreach $vm(sort keys(%vms)){ my $l=length($vm); if($l>$maxl){$maxl=$l;} }
-  foreach $vm(sort keys(%vms)){
-    my $n = $vm;
-    while(length($n)<$maxl){ $n=" ".$n; }
-    print "    $n  ::  $vms{$vm}\n";
+  foreach $vm(sort keys(%{$VMs})){
+    my $n;
+    while(length($n.$vm)<$maxl){ $n.=" "; }
+    print "    $n$vm  ::  $VMs->{$vm}->{'state'}\n";
+    if($opt{L}){
+      foreach $controller(sort keys(%{$VMs->{$vm}->{'nic'}})){
+        print "      NIC $controller :: MAC $VMs->{$vm}->{'nic'}->{$controller}->{'mac'} :: $VMs->{$vm}->{'nic'}->{$controller}->{'attach'}\n";
+      }
+      foreach $controller(sort(@controllers)){
+        foreach my $i(sort keys(%{$VMs->{$vm}->{$controller}})){
+          foreach my $j(sort keys(%{$VMs->{$vm}->{$controller}->{$i}})){
+            print "      $controller ($i, $j) $VMs->{$vm}->{$controller}->{$i}->{$j}->{'file'}  UUID $VMs->{$vm}->{$controller}->{$i}->{$j}->{'uuid'}\n";
+          }
+        }
+      }
+    }
   }
-  print "\n\n";
 }
 
 if($opt{b}){
@@ -150,7 +204,7 @@ sub usage {
   print qq|
     usage:
 
-    $0 -l
+    $0 -l [ -L ]
     $0 -n VM -A
     $0 -n VM -b [ -v ]
     $0 -n VM -b [ -o dev1,dev2,dev3,dev4 ]
@@ -160,6 +214,7 @@ sub usage {
     $0 -h
 
     -l : list VirtualBox machines
+    -L : long listing includes networks and disks
     -n : name of the VirtualBox machine
     -A : send ACPI power off request
     -b : power on and boot machine
@@ -169,7 +224,7 @@ sub usage {
     -r : enable VRDE server
     -a : add X drives to VM(s)
     -c : controller name should be SAS or SCSI
-    -s : size of drive(s) in megabytes
+    -s : size of drive(s) in GB
     -N : comma seperated list of VMs to which the disks should be attached
     -p : power off machine
     -v : verbose output
