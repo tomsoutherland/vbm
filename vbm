@@ -181,7 +181,7 @@ sub listvms {
         print "      NIC $controller :: MAC $VMs->{$vm}->{'nic'}->{$controller}->{'mac'} :: $VMs->{$vm}->{'nic'}->{$controller}->{'attach'}\n";
       }
       foreach $controller(sort(@controllers)){
-        foreach my $i(sort keys(%{$VMs->{$vm}->{$controller}})){
+        foreach my $i(sort {$a<=>$b}keys(%{$VMs->{$vm}->{$controller}})){
           foreach my $j(sort keys(%{$VMs->{$vm}->{$controller}->{$i}})){
             print "      $controller ($i, $j) $VMs->{$vm}->{$controller}->{$i}->{$j}->{'file'}  UUID $VMs->{$vm}->{$controller}->{$i}->{$j}->{'uuid'}\n";
           }
