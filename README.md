@@ -31,3 +31,18 @@ $ vbm -h
     -v : verbose output
     -h : duh!
 
+ABOUT
+
+vbm is a perl wrapper for the most commonly used features of VirtualBox. When used to boot a virtual machine, it will create a serial port in the virtual machines configuration and attach the shell to that device for console use. You will need to configure the virtual machine to use serial port 0 as the console device. Once this is done, you can use your favorite terminal app to boot and console to the virtual machine.
+
+INSTALL
+
+1) Make sure the script is using your version of perl. Mine is "#!/usr/bin/perl" but yours may be different.
+
+2) Install socat as this is used to connect to the console device.
+
+3) Copy the script to your favorite directory included in your path. Ensure it is executable (chmod +x ~/bin/vbm).
+
+5) Copy vbm-config to ~/.vbm and edit it to point to your installation of VirtualBox and socat.
+
+6) Enjoy never having to use the GUI again (or at least limited need for the GUI).
