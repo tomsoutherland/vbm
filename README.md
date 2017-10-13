@@ -35,6 +35,8 @@ ABOUT
 
 vbm is a perl wrapper for the most commonly used features of VirtualBox. When used to boot a virtual machine, it will create a serial port in the virtual machines configuration and attach the shell to that device for console use. You will need to configure the virtual machine to use serial port 0 as the console device. Once this is done, you can use your favorite terminal app to boot and console to the virtual machine.
 
+When adding drives to multiple machines, the drives will be created as "--variant Fixed" and attached as "--mtype shareable". This is still a WIP and I intend to add VM creation and basic editing. When drives are added to a single machine, the "--variant Standard" is used and attached as "--mtype normal".
+
 INSTALL
 
 1) Make sure the script is using your version of perl. Mine is "#!/usr/bin/perl" but yours may be different.
