@@ -9,16 +9,22 @@ use strict;
 use File::Path qw(make_path);
 use File::Temp qw(tempfile);
 use File::Basename;
-use vars qw/ %opt /;
 
 # read in the config file
-our ($vbdiskdir,$vbheadless,$vbheadlessargs,$vbmanage,$socat,$socatargs,$VMs);
+our ($vbdiskdir,$vbheadless,$vbheadlessargs,$vbmanage,$socat,$socatargs,$VMs,$DISKs,$NETs);
+our @controllers=("IDE", "SATA", "SCSI", "SAS");
 my $config_file = $ENV{'HOME'}."/.vbm";
 require $config_file;
 
-my $opt_string='m:n:o:a:c:s:N:AblhpvLD';
+# command line options
+our %opt;
+my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:CRVdblhpPvLDHZe';
 if(! getopts( "$opt_string", \%opt )){ usage(); exit; }
+#print Dumper(%opt); exit;
+
+# create our shared disk directory
 if(! -d "$vbdiskdir"){ make_path("$vbdiskdir") }
+
 # init the VMs hash
 read_vms();
 
@@ -27,21 +33,146 @@ our $titlebar=$opt{n}." console";
 
 if($opt{h}){ usage(); exit; }
 if($opt{l}){ listvms(); exit; }
+if($opt{d}){ listdisks(); exit; }
+if($opt{e}){ listnetworks(); exit; }
+if($opt{E}){ setnetwork(); exit; }
 if($opt{m}){ mountcd(); exit; }
 if($opt{a}){ add_disks(); exit; }
 if($opt{b}){ boot_vm(); exit; }
 if($opt{p}){ poweroff_vm(); exit; }
-if($opt{A}){ poweroff_acpi_vm(); exit; }
+if($opt{P}){ poweroff_acpi_vm(); exit; }
+if($opt{r}){ remove_disk(); exit; }
+if($opt{C}){ create_modify_vm(); exit; }
+if($opt{A}){ attach_disk(); exit; }
+if($opt{D}){ delete_vm(); exit; }
+if($opt{w}){ netcable(); exit; }
 # print usage and bail if we get to here
 usage(); exit;
 
+sub usage {
+  print qq|
+    usage:
+
+    $0 -l [ -L ]
+    $0 -d
+    $0 -e
+    $0 -E X,network -n VM
+    $0 -w X,Y -n VM
+    $0 -C -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ] 
+    $0 -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -v ]
+    $0 -m /path/to/cdimage.iso -n VM -c XXX
+    $0 -p -n VM
+    $0 -A DISKUUID -c XXX -N VMx,VMy,VMz,... [ -v ]
+    $0 -a X -c XXX -s XX -N VMx,VMy,VMz,... [ -v ]
+    $0 -r DISKUUID -N VMx,VMy,VMz,... [ -R ] [ -v ]
+    $0 -D -n VM -R
+    $0 -h
+
+    -l : list VMs
+    -d : list VirtualBox disks
+    -e : list VirtualBox networks
+    -E : set network NIC X attachment for VM
+    -w : set network X attached (1) or disconnected (0)
+    -L : long listing includes networks and disks
+    -n : name of the VM
+    -C : create or modify VM
+    -O : OS type (Solaris_64,OpenSolaris_64,Solaris11_64) see "VBoxManage list ostypes"
+    -H : make VM headless (remove graphics controller, disable keyboard and mouse)
+    -M : amount of RAM for this VM
+    -b : power on and boot machine
+    -m : mount iso on node
+    -o : when used with -b, specify the BIOS boot device order (dvd, disk, net, floppy)
+    -V : enable VRDE server
+    -a : add X drives to VM(s)
+    -c : controller name. Use SAS or SCSI for shared. Single attach may use IDE or SATA.
+    -s : size of drive(s) in GB
+    -N : comma seperated list of VMs to which the disk operation shoud be performed
+    -r : detach disk UUID from the given nodes
+    -R : delete the disk medium
+    -A : attach disk UUID to the given nodes
+    -D : delete the VM
+    -p : power off machine
+    -P : send ACPI power off request
+    -v : verbose output
+    -h : duh!
+
+|;
+}
+
+sub netcable {
+  my $vm=$opt{n};
+  my($wire, $state)=split(',', $opt{w});
+  my $cmd;
+  if($state){ $cmd="$vbmanage modifyvm $vm --cableconnected$wire on"; }
+  else{ $cmd="$vbmanage modifyvm $vm --cableconnected$wire off"; }
+  print "Running $cmd\n" if $opt{v};
+  system($cmd);
+}
+
+sub setnetwork {
+  readnetworks();
+  my $vm=$opt{n};
+  my($nic, $net)=split(',', $opt{E});
+  my $ntype = $NETs->{$net}->{'type'};
+  my $cmd;
+  if($ntype eq "bridged"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --bridgeadapter1 $net"; }
+  elsif($ntype eq "hostonly"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --hostonlyadapter1 $net"; }
+  elsif($ntype eq "intnet"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --intnet1 $net"; }
+  elsif($ntype eq "nat"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --nat-network1 $net"; }
+  else{ die "Unknown network: $net type $ntype\n"; }
+  print "Running $cmd\n" if $opt{v};
+  system($cmd);
+}
+
+sub readnetworks {
+  $NETs={};
+  my %nettypes = (
+   "intnets" => "intnet",
+   "bridgedifs" => "bridged",
+   "hostonlyifs" => "hostonly",
+   "natnets" => "nat",
+  );
+  foreach my $nettype(sort(keys(%nettypes))){
+    my $cmd="$vbmanage list $nettype";
+    print "Running $cmd\n" if $opt{v};
+    open(foo, "$cmd |");
+    my $name;
+    while(<foo>){ chomp;
+      if(/^Name:\s+(\S+)$/){ $name=$1; $NETs->{$name}->{'type'}=$nettypes{$nettype}; }
+      elsif(/^Name:\s+(\S+):.*$/){ $name=$1; $NETs->{$name}->{'type'}=$nettypes{$nettype}; }
+      elsif(/^IPAddress:\s+(\S+.*)$/){ $NETs->{$name}->{'ip'}=$1; }
+    }
+  }
+}
+
+sub listnetworks {
+  readnetworks();
+  print "\n    Networks\n\n";
+  foreach my $net(sort(keys %{$NETs})){
+    if(defined $NETs->{$net}->{'ip'}){
+      print "      $net :: $NETs->{$net}->{'type'} :: $NETs->{$net}->{'ip'}\n";
+    }else{
+      print "      $net :: $NETs->{$net}->{'type'} :: \n";
+    }
+  }
+}
+
+sub delete_vm {
+  my $cmdstring = "$vbmanage unregistervm $opt{n}";
+  if($opt{R}){ $cmdstring.=" --delete"; }
+  print "Running $cmdstring\n" if $opt{v};
+  system($cmdstring);
+}
+
 sub poweroff_vm {
   my $cmdstring = "$vbmanage controlvm $opt{n} poweroff";
+  print "Running $cmdstring\n" if $opt{v};
   system($cmdstring);
 }
 
 sub poweroff_acpi_vm {
   my $cmdstring = "$vbmanage controlvm $opt{n} acpipowerbutton";
+  print "Running $cmdstring\n" if $opt{v};
   system($cmdstring);
 }
 
@@ -50,10 +181,40 @@ sub set_title_bar {
   print "\033]0;${titlebar}\007";
 }
 
+sub listdisks {
+  read_disks();
+  foreach my $uuid(sort keys(%{$DISKs})){
+    if(defined $DISKs->{$uuid}->{'used'}){
+      print "$uuid :: $DISKs->{$uuid}->{'format'} :: @{$DISKs->{$uuid}->{'used'}} :: $DISKs->{$uuid}->{'size'} :: $DISKs->{$uuid}->{'loc'}\n";
+    }else{
+      print "$uuid :: $DISKs->{$uuid}->{'format'} :: (Not Used) :: $DISKs->{$uuid}->{'size'} :: $DISKs->{$uuid}->{'loc'}\n";
+    }
+  }
+}
+
+sub read_disks {
+  $DISKs={};
+  my($uuid);
+  my $cmd="$vbmanage list -l hdds";
+  print "Running $cmd\n" if $opt{v};
+  open(foo, "$cmd |");
+  while(<foo>){ chomp;
+    if(/^UUID:\s+(\S+)$/){ $uuid=$1; }
+    if(/^Location:\s+(\S.*)$/){ $DISKs->{$uuid}->{'loc'}=$1; }
+    if(/^Capacity:\s+(\d+) /){ $DISKs->{$uuid}->{'size'}=$1; }
+    if(/^Format variant:\s+(\S+) /){ $DISKs->{$uuid}->{'format'}=$1; }
+    if(/^In use by VMs:\s+(\S.*) \(UUID/){ push(@{$DISKs->{$uuid}->{'used'}}, $1); }
+    if(/^\s+(\S.*) \(UUID/){ push(@{$DISKs->{$uuid}->{'used'}}, $1); }
+  }
+  print Dumper $DISKs if $opt{Z};
+}
+
 sub read_vms {
   $VMs={};
   my ($vm);
-  open(foo, "$vbmanage list -l vms |");
+  my $cmd="$vbmanage list -l vms";
+  print "Running $cmd\n" if $opt{v};
+  open(foo, "$cmd |");
   while(<foo>){ chomp;
     if(/^Name:\s+(\S+.*)$/){ $vm=$1; }
     if(/^UUID:\s+(\S+)$/){ $VMs->{$vm}->{'uuid'}=$1.")"; }
@@ -63,7 +224,59 @@ sub read_vms {
     if(/^(\S+)\s\((\d+)\,\s(\d+)\):\s(Empty)$/){ $VMs->{$vm}->{$1}->{$2}->{$3}->{'file'}=$4; $VMs->{$vm}->{$1}->{$2}->{$3}->{'uuid'}='';}
     if(/^NIC\s(\d):\s+MAC:\s(\S+)\,\sAttachment\:\s(\S+.*)\,\sCable connect/){ $VMs->{$vm}->{'nic'}->{$1}->{'mac'}=$2; $VMs->{$vm}->{'nic'}->{$1}->{'attach'}=$3; }
   }
-  #print Dumper $VMs if $opt{D};
+  print Dumper $VMs if $opt{Z};
+}
+
+sub remove_disk {
+  my $uuid=$opt{r};
+  my @nodes=split(',', $opt{N});
+  my ($portmax, $targetmax);
+  NODE: foreach my $node(@nodes){
+    foreach my $ctlr(sort(@controllers)){
+      if($ctlr eq "SCSI"){ $portmax=15; $targetmax=0; }
+      elsif($ctlr eq "SATA"){ $portmax=29; $targetmax=0; }
+      elsif($ctlr eq "SAS"){ $portmax=7; $targetmax=0; }
+      elsif($ctlr eq "IDE"){ $portmax=1; $targetmax=1; }
+      for(my $i=0; $i<=$portmax; $i++){
+        for(my $j=0; $j<=$targetmax; $j++){
+          print "Checking VM $node controller $ctlr port $i and device $j for disk $uuid\n" if $opt{v};
+          if($VMs->{$node}->{$ctlr}->{$i}->{$j}->{'uuid'} eq $uuid){
+            my $cmd = "$vbmanage storageattach '$node' --storagectl $ctlr --port $i --device $j --medium none";
+            print "Running $cmd\n" if $opt{v};
+            system($cmd);
+            next NODE;
+          }
+        }
+      }
+    }
+  }
+  if($opt{R}){
+    my $cmd = "$vbmanage closemedium disk $uuid --delete";
+    print "Running $cmd\n" if $opt{v};
+    system($cmd);
+  }
+}
+
+sub attach_disk {
+  #my ($node, $diskuuid, $shared, $dtype) = @_;
+  my $uuid=$opt{A};
+  my $ctlr=$opt{c};
+  my (%c,$shared);
+  my @nodes=split(',', $opt{N});
+  read_disks();
+  foreach my $node(@nodes){ $c{$node}=1; }
+  foreach my $n(@{$DISKs->{$uuid}->{'used'}}){ $c{$n}=1; }
+  if((scalar(keys %c)) > 1){ $shared=1; }else{ $shared=0; }
+  if($shared){
+    my $cmd="$vbmanage modifymedium disk $uuid --type shareable";
+    print "Running $cmd\n" if $opt{v};
+    system($cmd);
+  }
+  foreach my $n(@{$DISKs->{$uuid}->{'used'}}){ delete $c{$n}; }
+  foreach my $node(sort(keys %c)){ 
+    print "Calling disk_attach($node, $uuid, $shared, 'hdd')\n" if $opt{v};
+    disk_attach($node, $uuid, $shared, 'hdd');
+  }
 }
 
 sub add_disks {
@@ -80,10 +293,12 @@ sub add_disks {
   # add controller if needed
   foreach my $node(@nodes){
     my $ctlr=uc($opt{c});
-    my $cmd = "$vbmanage storagectl '$node' --name $ctlr --add $ctlr > /dev/null 2>&1";
-    if($ctlr eq "SAS"){ $cmd = "$vbmanage storagectl '$node' --name $ctlr --add $ctlr --portcount 8 > /dev/null 2>&1"; }
-    print "Running: $cmd\n" if $opt{D};
-    system($cmd);
+    if(! defined $VMs->{$node}->{$ctlr}){
+      my $cmd = "$vbmanage storagectl '$node' --name $ctlr --add $ctlr";
+      if($ctlr eq "SAS"){ $cmd .= " --portcount 8"; }
+      print "Running: $cmd\n" if $opt{v};
+      system($cmd);
+    }
   }
   print "Using $vbdiskdir for disk creation.\n" if $opt{v};
   my $cmdstring;
@@ -95,8 +310,8 @@ sub add_disks {
     print "creating $diskname\n" if $opt{v};
     my $size = (1024 * $opt{s});
     my $cmd;
-    if($shared){ $cmd = "$vbmanage createmedium disk --size $size --variant Fixed --filename '$diskname' 2>&1\n"; }
-    else{ $cmd = "$vbmanage createmedium disk --size $size --filename '$diskname' 2>&1\n"; }
+    if($shared){ $cmd = "$vbmanage createmedium disk --size $size --variant Fixed --filename '$diskname'\n"; }
+    else{ $cmd = "$vbmanage createmedium disk --size $size --filename '$diskname'\n"; }
     print $cmd if $opt{v};
     my $uuid='';
     open(foo, "$cmd |");
@@ -106,13 +321,13 @@ sub add_disks {
     }
     foreach my $node(@nodes){
       print "Attaching new disk $uuid to $node\n" if $opt{v};
-      disk_attach($node,$uuid,$shared);
+      disk_attach($node,$uuid,$shared,'hdd');
     }
   }
 }
 
 sub disk_attach {
-  my ($node, $diskuuid, $shared) = @_;
+  my ($node, $diskuuid, $shared, $dtype) = @_;
   my $ctlr=uc($opt{c});
   my ($port, $portmax, $targetmax);
   if($ctlr eq "SCSI"){ $portmax=15; $targetmax=0; }
@@ -125,14 +340,13 @@ sub disk_attach {
     exit(1);
   }
   # find an unused port
-  my $attached=0;
   for(my $i=0; $i<=$portmax; $i++){
     for(my $j=0; $j<=$targetmax; $j++){
-      print "Checking port $i and device $j\n" if $opt{D};
+      print "Checking port $i and device $j\n" if $opt{Z};
       if(! defined $VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'}){
-        my $cmd = "$vbmanage storageattach '$node' --storagectl $ctlr --type hdd --port $i --device $j --medium $diskuuid";
+        my $cmd = "$vbmanage storageattach '$node' --storagectl $ctlr --type $dtype --port $i --device $j --medium '$diskuuid'";
         if($shared){ $cmd .= " --mtype shareable"; }
-        print "Running: $cmd\n" if $opt{D};
+        print "Running: $cmd\n" if $opt{v};
         system($cmd);
         read_vms();
         return;
@@ -140,7 +354,7 @@ sub disk_attach {
     }
   }
   print "Unable to attach disk, deleting.\n";
-  system("$vbmanage closemedium $diskuuid --delete > /dev/null 2>&1");
+  system("$vbmanage closemedium $diskuuid --delete");
 }
 
 sub disk_tmpfile {
@@ -149,27 +363,46 @@ sub disk_tmpfile {
 }
 
 sub mountcd {
-  my(%sata);
-  open(foo, "$vbmanage showvminfo $opt{n} --machinereadable |") or die;
-  while(<foo>){ chomp;
-    if(/^\"(\S+)\-(\d+)\-\d+\"\=\S+.*\.iso\"$/){
-      my $c = $1; my $p = $2;
-      my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $c --port $p --device 0 --type dvddrive --medium emptydrive";
-      exec($cmdstring)||die "exec failed: $cmdstring";
-      sleep 3;
-      my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $c --port $p --device 0 --type dvddrive --medium $opt{m}";
-      exec($cmdstring)||die "exec failed: $cmdstring";
-    }
-    elsif(/^\"(\S+)\-(\d+)\-\d+\"\=\"emptydrive\"/){
-      my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $1 --port $2 --device 0 --type dvddrive --medium $opt{m}";
-      exec($cmdstring)||die "exec failed: $cmdstring";
+  my $node=$opt{n};
+  my $ctlr=uc($opt{c});
+  if(! defined $VMs->{$node}->{$ctlr}){
+    my $cmd = "$vbmanage storagectl '$node' --name $ctlr --add $ctlr";
+    print "Running $cmd\n" if $opt{v};
+    system($cmd);
+  }
+  my ($port, $portmax, $targetmax);
+  if($ctlr eq "SCSI"){ $portmax=15; $targetmax=0; }
+  elsif($ctlr eq "SATA"){ $portmax=29; $targetmax=0; }
+  elsif($ctlr eq "SAS"){ $portmax=7; $targetmax=0; }
+  elsif($ctlr eq "IDE"){ $portmax=1; $targetmax=1; }
+  else{
+    print "\nUnknown controller: $ctlr\n";
+    exit(1);
+  }
+  # find the DVD port
+  for(my $i=0; $i<=$portmax; $i++){
+    for(my $j=0; $j<=$targetmax; $j++){
+      if($VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'} =~ /\.iso$/){
+        print "Unmounting $VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'} from $ctlr ($i, $j)\n" if $opt{v};
+        my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $ctlr --port $i --device $j --type dvddrive --medium emptydrive";
+        if(system($cmdstring)!=0){die "exec failed: $cmdstring";}
+        sleep 2;
+        print "Mounting $opt{m} to $ctlr ($i, $j)\n" if $opt{v};
+        my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $ctlr --port $i --device $j --type dvddrive --medium '$opt{m}'";
+        exec($cmdstring)||die "exec failed: $cmdstring";
+      }elsif($VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'} =~ /Empty/){
+        print "Mounting $opt{m} to $ctlr ($i, $j)\n" if $opt{v};
+        my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $ctlr --port $i --device $j --type dvddrive --medium '$opt{m}'";
+        exec($cmdstring)||die "exec failed: $cmdstring";
+      }
     }
   }
+  # new attachment, call attach
+  disk_attach($node, $opt{m}, 0, 'dvddrive');
 }
 
 sub listvms {
   my ($vm, $maxl, $controller);
-  my @controllers=("IDE", "SATA", "SCSI", "SAS");
   foreach $vm(sort keys(%{$VMs})){ my $l=length($vm); if($l>$maxl){$maxl=$l;} }
   print "\n\n  Virtual Machines\n\n";
   foreach $vm(sort keys(%{$VMs})){
@@ -198,11 +431,18 @@ sub boot_vm {
   # connect console if running
   if(checkrunning($opt{n})){ consoleconnect($conpipe); }
 
-  # boot vm
+  # set boot order
+  #my $cmdstring = "$vbmanage modifyvm $opt{n} --boot1 $bo[0] --boot2 $bo[1] --boot3 $bo[2] --boot4 $bo[3]";
+  my $cmdstring = "$vbmanage modifyvm $opt{n}";
   if( my @bo = split(/\,/,$opt{o}) ){
-    my $cmdstring = "$vbmanage modifyvm $opt{n} --boot1 $bo[0] --boot2 $bo[1] --boot3 $bo[2] --boot4 $bo[3]";
+    my $i=1;
+    while(my $d=shift(@bo)){
+      $cmdstring.=" --boot$i $d"; $i++;
+    }
+    print "Running $cmdstring\n" if $opt{v};
     system($cmdstring);
   }
+  # boot vm
   bootmachine($opt{n});
   if(checkrunning($opt{n})){ consoleconnect($conpipe); }
   die "Can not boot or console to $opt{n}";
@@ -230,7 +470,7 @@ sub checkrunning {
 
 sub bootmachine {
   my($machine)=@_;
-  if($opt{r}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
+  if($opt{V}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
   my $cmdstring = "$vbmanage modifyvm $machine --uartmode1 server /tmp/vb-${machine}-console";
   system($cmdstring);
   my $cmdstring = "$vbmanage modifyvm $machine --uart1 0x3f8 4";
@@ -249,35 +489,21 @@ sub bootmachine {
   }
 }
 
-sub usage {
-  print qq|
-    usage:
-
-    $0 -l [ -L ]
-    $0 -n VM -A
-    $0 -n VM -b [ -v ]
-    $0 -n VM -b [ -o dev1,dev2,dev3,dev4 ]
-    $0 -n VM -m /path/to/cdimage.iso
-    $0 -n VM -p
-    $0 -a X -c XXX -s XX -N VMx,VMy,VMz,... [ -v ]
-    $0 -h
-
-    -l : list VirtualBox machines
-    -L : long listing includes networks and disks
-    -n : name of the VirtualBox machine
-    -A : send ACPI power off request
-    -b : power on and boot machine
-    -m : mount iso on node
-    -o : when used with -b, specify the 4
-         devices none,floppy,dvd,disk,net
-    -r : enable VRDE server
-    -a : add X drives to VM(s)
-    -c : controller name should be SAS or SCSI
-    -s : size of drive(s) in GB
-    -N : comma seperated list of VMs to which the disks should be attached
-    -p : power off machine
-    -v : verbose output
-    -h : duh!
-
-|;
+sub create_modify_vm {
+  my $vm = $opt{n};
+  my $cmd="";
+  # create vm if needed
+  if(! defined $VMs->{$vm}){
+    $cmd="$vbmanage createvm --name $vm --ostype $opt{O} --register";
+    print "Running $cmd\n" if $opt{v};
+    system($cmd);
+  }
+  $cmd="VBoxManage modifyvm $vm";
+  if(defined $opt{H}){ $cmd.=" --graphicscontroller none --vram 0 --keyboard usb --mouse usb --usb off --usbehci off --usbxhci off"; }
+  if(defined $opt{M}){ $cmd.=" --memory $opt{M}"; }
+  if(defined $opt{O}){ $cmd.=" --ostype $opt{O}"; }
+  if(defined $opt{c}){ $cmd.=" --cpus $opt{c}"; }
+  print "Running $cmd\n" if $opt{v};
+  system($cmd);
 }
+
