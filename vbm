@@ -18,7 +18,7 @@ require $config_file;
 
 # command line options
 our %opt;
-my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:CRVdblhpPvLDHZe';
+my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:g:CRVdblhpPvLDHZe';
 if(! getopts( "$opt_string", \%opt )){ usage(); exit; }
 #print Dumper(%opt); exit;
 
@@ -32,6 +32,7 @@ our $conpipe="/tmp/vb-".$opt{n}."-console";
 our $titlebar=$opt{n}." console";
 
 if($opt{h}){ usage(); exit; }
+if($opt{g}){ clonevm(); exit; }
 if($opt{l}){ listvms(); exit; }
 if($opt{d}){ listdisks(); exit; }
 if($opt{e}){ listnetworks(); exit; }
@@ -59,6 +60,7 @@ sub usage {
     $0 -E X,network -n VM
     $0 -w X,Y -n VM
     $0 -C -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ] 
+    $0 -g VM,CLONE
     $0 -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -v ]
     $0 -m /path/to/cdimage.iso -n VM -c XXX
     $0 -p -n VM
@@ -76,6 +78,7 @@ sub usage {
     -L : long listing includes networks and disks
     -n : name of the VM
     -C : create or modify VM
+    -g : create CLONE from VM
     -O : OS type (Solaris_64,OpenSolaris_64,Solaris11_64) see "VBoxManage list ostypes"
     -H : make VM headless (remove graphics controller, disable keyboard and mouse)
     -M : amount of RAM for this VM
@@ -97,6 +100,13 @@ sub usage {
     -h : duh!
 
 |;
+}
+
+sub clonevm {
+  my($vm,$clone)=split(',', $opt{g});
+  my $cmd="$vbmanage clonevm $vm --name $clone --register";
+  print "Running $cmd\n" if $opt{v};
+  system($cmd);
 }
 
 sub netcable {
