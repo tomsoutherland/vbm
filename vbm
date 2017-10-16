@@ -18,7 +18,7 @@ require $config_file;
 
 # command line options
 our %opt;
-my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:g:CRVdblhpPvLDHZe';
+my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:C:BRVdblhpPvLDHZe';
 if(! getopts( "$opt_string", \%opt )){ usage(); exit; }
 #print Dumper(%opt); exit;
 
@@ -32,7 +32,7 @@ our $conpipe="/tmp/vb-".$opt{n}."-console";
 our $titlebar=$opt{n}." console";
 
 if($opt{h}){ usage(); exit; }
-if($opt{g}){ clonevm(); exit; }
+if($opt{C}){ clonevm(); exit; }
 if($opt{l}){ listvms(); exit; }
 if($opt{d}){ listdisks(); exit; }
 if($opt{e}){ listnetworks(); exit; }
@@ -43,7 +43,7 @@ if($opt{b}){ boot_vm(); exit; }
 if($opt{p}){ poweroff_vm(); exit; }
 if($opt{P}){ poweroff_acpi_vm(); exit; }
 if($opt{r}){ remove_disk(); exit; }
-if($opt{C}){ create_modify_vm(); exit; }
+if($opt{B}){ create_modify_vm(); exit; }
 if($opt{A}){ attach_disk(); exit; }
 if($opt{D}){ delete_vm(); exit; }
 if($opt{w}){ netcable(); exit; }
@@ -59,8 +59,8 @@ sub usage {
     $0 -e
     $0 -E X,network -n VM
     $0 -w X,Y -n VM
-    $0 -C -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ] 
-    $0 -g VM,CLONE
+    $0 -B -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ] 
+    $0 -C VM,CLONE
     $0 -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -v ]
     $0 -m /path/to/cdimage.iso -n VM -c XXX
     $0 -p -n VM
@@ -78,8 +78,8 @@ sub usage {
     -w : set network X attached (1) or disconnected (0)
     -L : long listing includes networks and disks
     -n : name of the VM
-    -C : create or modify VM
-    -g : create CLONE from VM
+    -B : build or modify VM
+    -C : create CLONE from VM
     -O : OS type (Solaris_64,OpenSolaris_64,Solaris11_64) see "VBoxManage list ostypes"
     -H : make VM headless (remove graphics controller, disable keyboard and mouse)
     -M : amount of RAM for this VM
@@ -104,7 +104,7 @@ sub usage {
 }
 
 sub clonevm {
-  my($vm,$clone)=split(',', $opt{g});
+  my($vm,$clone)=split(',', $opt{C});
   my $cmd="$vbmanage clonevm $vm --name $clone --register";
   print "Running $cmd\n" if $opt{v};
   system($cmd);
@@ -121,6 +121,7 @@ sub netcable {
 }
 
 sub setnetwork {
+  if(! defined $opt{n}){ die "Must specify VM name (-n VM)\n"; }
   readnetworks();
   my $vm=$opt{n};
   my($nic, $net)=split(',', $opt{E});

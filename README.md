@@ -1,20 +1,19 @@
 # vbm
 perl wrapper for VirtualBox
 
-$ vbm -h
+usage:
 
-    usage:
-
-    vbm -l [ -L ]
+    vbm -l [ -L ] [ -N VMx,VMy,VMz,... ]
     vbm -d
     vbm -e
     vbm -E X,network -n VM
     vbm -w X,Y -n VM
-    vbm -C -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ]
-    vbm -g VM,CLONE
+    vbm -B -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ]
+    vbm -C VM,CLONE
     vbm -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -v ]
     vbm -m /path/to/cdimage.iso -n VM -c XXX
     vbm -p -n VM
+    vbm -P -n VM
     vbm -A DISKUUID -c XXX -N VMx,VMy,VMz,... [ -v ]
     vbm -a X -c XXX -s XX -N VMx,VMy,VMz,... [ -v ]
     vbm -r DISKUUID -N VMx,VMy,VMz,... [ -R ] [ -v ]
@@ -28,8 +27,8 @@ $ vbm -h
     -w : set network X attached (1) or disconnected (0)
     -L : long listing includes networks and disks
     -n : name of the VM
-    -C : create or modify VM
-    -g : create CLONE from VM
+    -B : build or modify VM
+    -C : create CLONE from VM
     -O : OS type (Solaris_64,OpenSolaris_64,Solaris11_64) see "VBoxManage list ostypes"
     -H : make VM headless (remove graphics controller, disable keyboard and mouse)
     -M : amount of RAM for this VM
