@@ -19,7 +19,7 @@ require $config_file;
 # command line options
 our %opt;
 my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:C:BRVdblhpPvLDHZe';
-if(! getopts( "$opt_string", \%opt )){ usage(); exit; }
+if(! getopts( "$opt_string", \%opt )){ usage(1); }
 #print Dumper(%opt); exit;
 
 # create our shared disk directory
@@ -48,9 +48,10 @@ if($opt{A}){ attach_disk(); exit; }
 if($opt{D}){ delete_vm(); exit; }
 if($opt{w}){ netcable(); exit; }
 # print usage and bail if we get to here
-usage(); exit;
+usage(1);
 
 sub usage {
+  my($action)=@_;
   print qq|
     usage:
 
@@ -101,6 +102,7 @@ sub usage {
     -h : duh!
 
 |;
+  exit if $action;
 }
 
 sub clonevm {
@@ -295,9 +297,9 @@ sub attach_disk {
 }
 
 sub add_disks {
-  if( ! $opt{N} ){ usage(1); }
-  if( ! $opt{c} ){ usage(1); }
-  if( ! $opt{s} ){ usage(1); }
+  if( ! defined $opt{N} ){ usage(1); }
+  if( ! defined $opt{c} ){ usage(1); }
+  if( ! defined $opt{s} ){ usage(1); }
   my @nodes=split(',', $opt{N});
   my $shared=1;
   if(scalar(@nodes) == 1 ){
@@ -400,6 +402,7 @@ sub mountcd {
       if($VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'} =~ /\.iso$/){
         print "Unmounting $VMs->{$node}->{$ctlr}->{$i}->{$j}->{'file'} from $ctlr ($i, $j)\n" if $opt{v};
         my $cmdstring = "$vbmanage storageattach $opt{n} --storagectl $ctlr --port $i --device $j --type dvddrive --medium emptydrive";
+        print "Running $cmdstring\n" if $opt{v};
         if(system($cmdstring)!=0){die "exec failed: $cmdstring";}
         sleep 2;
         print "Mounting $opt{m} to $ctlr ($i, $j)\n" if $opt{v};
@@ -475,6 +478,7 @@ sub consoleconnect {
   if(! -e $pipefoo){ die "Console pipe does not exist: $pipefoo"; }
   system("clear");
   my $cmdstring = $socat." ".$socatargs." ".$pipefoo;
+  print "Running $cmdstring\n" if $opt{v};
   exec($cmdstring)||die "exec failed: $cmdstring";
 }
 
@@ -494,8 +498,10 @@ sub bootmachine {
   my($machine)=@_;
   if($opt{V}){ $vbheadlessargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400"; }
   my $cmdstring = "$vbmanage modifyvm $machine --uartmode1 server /tmp/vb-${machine}-console";
+  print "Running $cmdstring\n" if $opt{v};
   system($cmdstring);
   my $cmdstring = "$vbmanage modifyvm $machine --uart1 0x3f8 4";
+  print "Running $cmdstring\n" if $opt{v};
   system($cmdstring);
   $cmdstring = "$vbheadless $vbheadlessargs -s $machine";
   defined(my $pid = fork)||die "Can't fork: $!";
@@ -504,6 +510,7 @@ sub bootmachine {
     sleep 5;
   }else{
     # child needs to exec the vm start command
+    print "Running $cmdstring\n" if $opt{v};
     open STDIN, '/dev/null'   or die "Can't read /dev/null: $!";
     open STDOUT, '>/dev/null' or die "Can't write to /dev/null: $!";
     open STDERR, '>/dev/null' or die "Can't write to /dev/null: $!";
