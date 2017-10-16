@@ -126,10 +126,10 @@ sub setnetwork {
   my($nic, $net)=split(',', $opt{E});
   my $ntype = $NETs->{$net}->{'type'};
   my $cmd;
-  if($ntype eq "bridged"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --bridgeadapter1 $net"; }
-  elsif($ntype eq "hostonly"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --hostonlyadapter1 $net"; }
-  elsif($ntype eq "intnet"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --intnet1 $net"; }
-  elsif($ntype eq "nat"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --nat-network1 $net"; }
+  if($ntype eq "bridged"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --bridgeadapter$nic $net"; }
+  elsif($ntype eq "hostonly"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --hostonlyadapter$nic $net"; }
+  elsif($ntype eq "intnet"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --intnet$nic $net"; }
+  elsif($ntype eq "nat"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --nat-network$nic $net"; }
   else{ die "Unknown network: $net type $ntype\n"; }
   print "Running $cmd\n" if $opt{v};
   system($cmd);
