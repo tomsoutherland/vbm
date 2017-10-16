@@ -54,7 +54,7 @@ sub usage {
   print qq|
     usage:
 
-    $0 -l [ -L ]
+    $0 -l [ -L ] [ -N VMx,VMy,VMz,... ]
     $0 -d
     $0 -e
     $0 -E X,network -n VM
@@ -228,6 +228,9 @@ sub read_vms {
   open(foo, "$cmd |");
   while(<foo>){ chomp;
     if(/^Name:\s+(\S+.*)$/){ $vm=$1; }
+    if(/^Memory size:\s+(\S.*)$/){ $VMs->{$vm}->{'memory'}=$1; }
+    if(/^Number of CPUs:\s+(\S*)$/){ $VMs->{$vm}->{'cpus'}=$1; }
+    if(/^Boot Device \((\d)\):\s*(\S.*)$/){ my $i=($1 - 1); ${$VMs->{$vm}->{'bootorder'}}[$i]=$2; }
     if(/^UUID:\s+(\S+)$/){ $VMs->{$vm}->{'uuid'}=$1.")"; }
     if(/^State:\s+(\S+.*)\.\d+\)$/){ $VMs->{$vm}->{'state'}=$1.")"; }
     if(/^Config file:\s+(\S+.*)$/){ $VMs->{$vm}->{'dir'}=dirname($1); }
@@ -413,14 +416,21 @@ sub mountcd {
 }
 
 sub listvms {
-  my ($vm, $maxl, $controller);
-  foreach $vm(sort keys(%{$VMs})){ my $l=length($vm); if($l>$maxl){$maxl=$l;} }
+  my ($vm, $maxl, $controller, @nodes);
+  if(defined $opt{N}){
+    @nodes=split(',', $opt{N});
+  }else{
+    @nodes=keys(%{$VMs});
+  }
+  foreach $vm(sort @nodes){ my $l=length($vm); if($l>$maxl){$maxl=$l;} }
   print "\n\n  Virtual Machines\n\n";
-  foreach $vm(sort keys(%{$VMs})){
+  foreach $vm(sort @nodes){
     my $n;
     while(length($n.$vm)<$maxl){ $n.=" "; }
+    print "\n" if $opt{L};
     print "    $vm$n  ::  $VMs->{$vm}->{'state'}\n";
     if($opt{L}){
+      print "      CPUs $VMs->{$vm}->{'cpus'} :: RAM $VMs->{$vm}->{'memory'} :: BIOS Boot Order ->  @{$VMs->{$vm}->{'bootorder'}}\n";
       foreach $controller(sort keys(%{$VMs->{$vm}->{'nic'}})){
         print "      NIC $controller :: MAC $VMs->{$vm}->{'nic'}->{$controller}->{'mac'} :: $VMs->{$vm}->{'nic'}->{$controller}->{'attach'}\n";
       }
