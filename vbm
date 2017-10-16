@@ -64,6 +64,7 @@ sub usage {
     $0 -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -v ]
     $0 -m /path/to/cdimage.iso -n VM -c XXX
     $0 -p -n VM
+    $0 -P -n VM
     $0 -A DISKUUID -c XXX -N VMx,VMy,VMz,... [ -v ]
     $0 -a X -c XXX -s XX -N VMx,VMy,VMz,... [ -v ]
     $0 -r DISKUUID -N VMx,VMy,VMz,... [ -R ] [ -v ]
