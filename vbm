@@ -18,7 +18,7 @@ require $config_file;
 
 # command line options
 our %opt;
-my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:C:BRVdblhpPvLDHZe';
+my $opt_string='m:n:o:a:c:s:N:r:O:M:A:E:w:C:BRVdblhpPvLDHZex';
 if(! getopts( "$opt_string", \%opt )){ usage(1); }
 #print Dumper(%opt); exit;
 
@@ -62,7 +62,7 @@ sub usage {
     $0 -w X,Y -n VM
     $0 -B -n VM [ -O OS_TYPE ] [ -M RAM_MB ] [ -c CPUs ] [ -H ] 
     $0 -C VM,CLONE
-    $0 -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -v ]
+    $0 -b -n VM [ -V ] [ -o DEVx,DEVy,... ] [ -x ] [ -v ]
     $0 -m /path/to/cdimage.iso -n VM -c XXX
     $0 -p -n VM
     $0 -P -n VM
@@ -85,6 +85,7 @@ sub usage {
     -H : make VM headless (remove graphics controller, disable keyboard and mouse)
     -M : amount of RAM for this VM
     -b : power on and boot machine
+    -x : don't connect to the console
     -m : mount iso on node
     -o : when used with -b, specify the BIOS boot device order (dvd, disk, net, floppy)
     -V : enable VRDE server
@@ -474,6 +475,7 @@ sub boot_vm {
 }
 
 sub consoleconnect {
+  exit if $opt{x};
   my($pipefoo)=@_;
   if(! -e $pipefoo){ die "Console pipe does not exist: $pipefoo"; }
   system("clear");
