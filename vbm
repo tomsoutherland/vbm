@@ -75,7 +75,7 @@ sub usage {
     -l : list VMs
     -d : list VirtualBox disks
     -e : list VirtualBox networks
-    -E : set network NIC X attachment for VM
+    -E : set network NIC X (1-8) attachment
     -w : set network X attached (1) or disconnected (0)
     -L : long listing includes networks and disks
     -n : name of the VM
@@ -117,8 +117,8 @@ sub netcable {
   my $vm=$opt{n};
   my($wire, $state)=split(',', $opt{w});
   my $cmd;
-  if($state){ $cmd="$vbmanage modifyvm $vm --cableconnected$wire on"; }
-  else{ $cmd="$vbmanage modifyvm $vm --cableconnected$wire off"; }
+  if($state){ $cmd="$vbmanage controlvm $vm setlinkstate$wire on"; }
+  else{ $cmd="$vbmanage controlvm $vm setlinkstate$wire off"; }
   print "Running $cmd\n" if $opt{v};
   system($cmd);
 }
@@ -128,6 +128,7 @@ sub setnetwork {
   readnetworks();
   my $vm=$opt{n};
   my($nic, $net)=split(',', $opt{E});
+  if($nic > 8){ die "Allowed NICs (1-8)\n"; }
   my $ntype = $NETs->{$net}->{'type'};
   my $cmd;
   if($ntype eq "bridged"){ $cmd="$vbmanage modifyvm $opt{n} --nic$nic $ntype --bridgeadapter$nic $net"; }
